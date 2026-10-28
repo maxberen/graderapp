@@ -139,6 +139,8 @@ void main() {
     engine.kick();
     await settle();
     expect(outbox.get(7, 1, 1)!.attempts, greaterThan(0));
+    expect(engine.phase, SyncPhase.error);
+    expect(outbox.lastErrorFor(7), 'Rejected (400)');
     expect(outbox.get(7, 1, 1)!.dirty, isTrue);
   });
 

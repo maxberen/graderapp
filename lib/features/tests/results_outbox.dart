@@ -154,6 +154,14 @@ class ResultsOutbox extends ChangeNotifier {
       .where((e) => e.dirty && (testId == null || e.testId == testId))
       .length;
 
+  /// Último error de subida de los resultados pendientes del test, si hay.
+  String? lastErrorFor(int testId) {
+    for (final e in _entries.values) {
+      if (e.testId == testId && e.dirty && e.lastError != null) return e.lastError;
+    }
+    return null;
+  }
+
   bool isCloseRequested(int testId) => _closeRequested.contains(testId);
   bool isClosed(int testId) => _closed.contains(testId);
   Set<int> get closeRequests => Set.of(_closeRequested);
@@ -331,7 +339,7 @@ class ResultsOutbox extends ChangeNotifier {
   Future<void> flushWrites() => _writing;
 }
 
-enum SyncPhase { idle, syncing, offline, authRequired }
+enum SyncPhase { idle, syncing, offline, authRequired, error }
 
 /// Sube en segundo plano lo pendiente de [ResultsOutbox]. Se dispara al
 /// calificar, al abrir/volver a la app y por reintentos con espera creciente.
@@ -411,6 +419,9 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
         if (!ok) return;
       } while (_again);
       if (outbox.pendingCount() > 0 || outbox.closeRequests.isNotEmpty) {
+        // Si algo quedó sin subir al terminar la pasada, es que el servidor
+        // lo rechazó: no es "subiendo", es un error con reintento.
+        _setPhase(SyncPhase.error);
         _scheduleRetry();
       } else {
         _failures = 0;
@@ -456,15 +467,17 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
             status == null ? 'No connection' : 'Server error ($status)',
             countAttempt: status != null,
           );
-          _setPhase(status == null ? SyncPhase.offline : SyncPhase.syncing);
+          _setPhase(status == null ? SyncPhase.offline : SyncPhase.error);
           _scheduleRetry();
           return false;
         }
         // 4xx: el servidor rechazó ESTE resultado; se sigue con los demás.
         outbox.markFailed(e, 'Rejected ($status)', countAttempt: true);
+        _setPhase(SyncPhase.error);
         skip.add(e.key);
       } catch (err) {
         outbox.markFailed(e, '$err', countAttempt: true);
+        _setPhase(SyncPhase.error);
         skip.add(e.key);
       }
     }
@@ -491,7 +504,7 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
           return false;
         }
         if (status == null || status == 408 || status == 429 || status >= 500) {
-          _setPhase(status == null ? SyncPhase.offline : SyncPhase.syncing);
+          _setPhase(status == null ? SyncPhase.offline : SyncPhase.error);
           _scheduleRetry();
           return false;
         }

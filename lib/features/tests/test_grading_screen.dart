@@ -273,6 +273,7 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                   _SyncStatus(
                     pending: _outbox.pendingCount(widget.test.id),
                     phase: _engine.phase,
+                    error: _outbox.lastErrorFor(widget.test.id),
                     onRetry: _engine.kick,
                   ),
                   const Spacer(),
@@ -639,11 +640,13 @@ class _SyncStatus extends StatelessWidget {
   const _SyncStatus({
     required this.pending,
     required this.phase,
+    required this.error,
     required this.onRetry,
   });
 
   final int pending;
   final SyncPhase phase;
+  final String? error;
   final VoidCallback onRetry;
 
   @override
@@ -662,6 +665,10 @@ class _SyncStatus extends StatelessWidget {
     } else if (phase == SyncPhase.offline) {
       text = '$pending not uploaded: no connection';
       icon = Icons.cloud_off_outlined;
+      color = Colors.orange;
+    } else if (phase == SyncPhase.error) {
+      text = '$pending not uploaded: ${error ?? 'server error'} — retrying';
+      icon = Icons.sync_problem;
       color = Colors.orange;
     } else {
       text = 'Uploading $pending…';
