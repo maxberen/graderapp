@@ -1,26 +1,47 @@
 import 'package:flutter/material.dart';
 
+import 'results_outbox.dart';
 import 'results_screen.dart';
+import 'results_sync_repository.dart';
 import 'technique_video_player.dart';
 import 'test_detail_repository.dart';
 import 'test_session_timer.dart';
 
 /// Porteado de jz (main.js:41065+) y el modal km-result-picker (cz,
-/// main.js:38433-38613) — confirmado contra una captura real de producción
-/// 2026-10-25: wizard que muestra UNA técnica a la vez con el contador
-/// "N/Total", código, puntaje y descripción; lista de alumnos presentes
-/// debajo; tocar un alumno abre un modal con 3 botones (Pass verde /
-/// Mistake rojo / Total Fail "F" rojo) y, si no es Pass, un selector de
-/// "mistake" real del curriculum antes de poder guardar.
+/// main.js:38433-38613): wizard que muestra UNA técnica a la vez con el
+/// contador "N/Total", código, puntaje y descripción; lista de alumnos
+/// presentes debajo; tocar un alumno abre un selector con 3 botones
+/// (check / X / F).
 ///
-/// Pendiente (no portado todavía, documentado para no fingir que está
-/// completo): grabación/reproducción de video de la técnica, foto por
-/// resultado, y sincronización de los resultados al servidor — todo queda
-/// en memoria local de esta pantalla por ahora.
+/// Sin botón SAVE general:
+///  - Check: se guarda al toque.
+///  - X o F: muestra los errores predeterminados de la técnica; tocar uno lo
+///    guarda al toque. También hay un campo de texto libre, que es lo único
+///    con botón SAVE. X y F se comportan igual en este selector; la
+///    diferencia es que F además marca al alumno con reprobación total del
+///    examen (ver ResultsSyncRepository).
+///
+/// "Guardar" es local primero, igual que el original: cada selección va a la
+/// cola persistente [ResultsOutbox] y [ResultsSyncEngine] la sube al servidor
+/// en segundo plano, reintentando solo si no hay señal. La pantalla siempre
+/// muestra lo que hay en la cola, así que funciona sin conexión.
+///
+/// Pendiente (no portado todavía): grabación/reproducción de video de la
+/// técnica, foto por resultado, y el cierre del test (SyncTestStatus y envío
+/// de emails a los alumnos).
 class TestGradingScreen extends StatefulWidget {
-  const TestGradingScreen({super.key, required this.test});
+  const TestGradingScreen({
+    super.key,
+    required this.test,
+    this.outbox,
+    this.engine,
+  });
 
   final TestDetail test;
+
+  /// Inyectables para pruebas. Por defecto, los de la app.
+  final ResultsOutbox? outbox;
+  final ResultsSyncEngine? engine;
 
   @override
   State<TestGradingScreen> createState() => _TestGradingScreenState();
@@ -28,42 +49,80 @@ class TestGradingScreen extends StatefulWidget {
 
 class _TestGradingScreenState extends State<TestGradingScreen> {
   late final List<TestStudent> _presentStudents;
+  late final ResultsOutbox _outbox;
+  late final ResultsSyncEngine _engine;
   int _techniqueIndex = 0;
   bool _showTimer = false;
-
-  /// techniqueId -> studentId -> resultado elegido en esta sesión.
-  final Map<int, Map<int, TechniqueResultStatus>> _results = {};
 
   @override
   void initState() {
     super.initState();
     _presentStudents = widget.test.students.where((s) => s.present).toList();
+    _outbox = widget.outbox ?? ResultsOutbox.instance;
+    _engine = widget.engine ?? ResultsSyncEngine.instance;
+    _outbox.seedFromServer(widget.test.id, widget.test.results, {
+      for (final s in widget.test.students) s.id: s.testStudentId,
+    });
+    _outbox.addListener(_onChanged);
+    _engine.addListener(_onChanged);
+    // Por si quedaron resultados de antes sin subir.
+    _engine.kick();
+  }
+
+  @override
+  void dispose() {
+    _outbox.removeListener(_onChanged);
+    _engine.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
   }
 
   TestTechnique get _technique => widget.test.techniques[_techniqueIndex];
 
-  TechniqueResultStatus? _resultFor(int studentId) =>
-      _results[_technique.techniqueId]?[studentId];
+  OutboxEntry? _entryFor(int studentId) =>
+      _outbox.get(widget.test.id, _technique.techniqueId, studentId);
 
-  void _setResult(int studentId, TechniqueResultStatus status) {
-    setState(() {
-      _results.putIfAbsent(_technique.techniqueId, () => {})[studentId] =
-          status;
-    });
-  }
+  GradedResult? _resultFor(int studentId) => _entryFor(studentId)?.result;
 
   Future<void> _openResultPicker(TestStudent student) async {
-    final current = _resultFor(student.id);
-    final result = await showModalBottomSheet<TechniqueResultStatus>(
+    if (_outbox.isCloseRequested(widget.test.id) ||
+        _outbox.isClosed(widget.test.id)) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'End Test was requested, grading is locked. '
+              'Open Results and tap Cancel to keep grading.',
+            ),
+          ),
+        );
+      return;
+    }
+    final technique = _technique;
+    final result = await showModalBottomSheet<GradedResult>(
       context: context,
       isScrollControlled: true,
       builder: (_) => _ResultPickerSheet(
         student: student,
-        technique: _technique,
-        initial: current,
+        technique: technique,
+        initial: _outbox
+            .get(widget.test.id, technique.techniqueId, student.id)
+            ?.result,
       ),
     );
-    if (result != null) _setResult(student.id, result);
+    if (result == null) return;
+    _outbox.put(
+      testId: widget.test.id,
+      techniqueId: technique.techniqueId,
+      studentId: student.id,
+      testStudentId: student.testStudentId,
+      result: result,
+    );
+    _engine.kick();
   }
 
   void _next() {
@@ -78,19 +137,24 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
       );
       return;
     }
-    if (_techniqueIndex < widget.test.techniques.length - 1) {
+    if (_isLastTechnique) {
+      _showResults();
+    } else {
       setState(() => _techniqueIndex++);
     }
   }
+
+  bool get _isLastTechnique =>
+      _techniqueIndex >= widget.test.techniques.length - 1;
 
   void _previous() {
     if (_techniqueIndex > 0) setState(() => _techniqueIndex--);
   }
 
   Future<void> _showResults() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ResultsScreen(test: widget.test)),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => ResultsScreen(test: widget.test)));
   }
 
   @override
@@ -139,12 +203,18 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                 bottom: 8,
                 child: IgnorePointer(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black.withValues(alpha: 0.75)],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.75),
+                        ],
                       ),
                     ),
                     child: Column(
@@ -165,13 +235,19 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                             const SizedBox(width: 8),
                             Text(
                               '${technique.score}%',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                           ],
                         ),
                         Text(
                           technique.name,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                     ),
@@ -180,7 +256,8 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
               ),
             ],
           ),
-          if (_showTimer) TestSessionTimer(onClose: () => setState(() => _showTimer = false)),
+          if (_showTimer)
+            TestSessionTimer(onClose: () => setState(() => _showTimer = false)),
           Material(
             color: Theme.of(context).colorScheme.surface,
             elevation: 2,
@@ -191,6 +268,12 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                   OutlinedButton(
                     onPressed: _showResults,
                     child: const Text('Results'),
+                  ),
+                  const SizedBox(width: 12),
+                  _SyncStatus(
+                    pending: _outbox.pendingCount(widget.test.id),
+                    phase: _engine.phase,
+                    onRetry: _engine.kick,
                   ),
                   const Spacer(),
                   IconButton(
@@ -210,8 +293,9 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                 final student = _presentStudents[index];
                 final result = _resultFor(student.id);
                 return ListTile(
+                  key: ValueKey('student-${student.id}'),
                   leading: CircleAvatar(
-                    backgroundColor: _colorFor(result),
+                    backgroundColor: _colorFor(result?.status),
                     child: Text(
                       student.num.toString().padLeft(2, '0'),
                       style: const TextStyle(fontSize: 11, color: Colors.white),
@@ -219,7 +303,7 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                   ),
                   title: Text(student.fullName),
                   subtitle: Text(student.levelCode),
-                  trailing: _resultIconFor(result),
+                  trailing: _trailingFor(student, result),
                   onTap: () => _openResultPicker(student),
                 );
               },
@@ -234,14 +318,15 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                   Expanded(
                     child: OutlinedButton(
                       onPressed: _techniqueIndex == 0 ? null : _previous,
-                      child: const Text('ANTERIOR'),
+                      child: const Text('PREVIOUS'),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton(
+                      key: const Key('next-or-results'),
                       onPressed: _next,
-                      child: const Text('SIGUIENTE'),
+                      child: Text(_isLastTechnique ? 'RESULTS' : 'NEXT'),
                     ),
                   ),
                 ],
@@ -250,6 +335,28 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _trailingFor(TestStudent student, GradedResult? result) {
+    final entry = _entryFor(student.id);
+    final icon = _resultIconFor(result?.status);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (entry != null && entry.dirty)
+          Tooltip(
+            message: entry.lastError ?? 'Waiting to upload',
+            child: Icon(
+              entry.lastError == null
+                  ? Icons.cloud_upload_outlined
+                  : Icons.sync_problem,
+              size: 18,
+              color: entry.lastError == null ? Colors.grey : Colors.orange,
+            ),
+          ),
+        if (icon != null) ...[const SizedBox(width: 8), icon],
+      ],
     );
   }
 
@@ -272,14 +379,22 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
       case TechniqueResultStatus.fail:
         return const Icon(Icons.close, color: Color(0xFFB61317));
       case TechniqueResultStatus.totalFail:
-        return const Text('F', style: TextStyle(color: Color(0xFFB61317), fontWeight: FontWeight.bold));
+        return const Text(
+          'F',
+          style: TextStyle(
+            color: Color(0xFFB61317),
+            fontWeight: FontWeight.bold,
+          ),
+        );
       case null:
         return null;
     }
   }
 }
 
-/// Porteado del modal km-result-picker (cz, main.js:38433-38613).
+/// Selector de resultado de un alumno en una técnica (porteo del modal
+/// km-result-picker, cz, main.js:38433-38613) con el flujo nuevo, sin SAVE
+/// general: devuelve el [GradedResult] apenas hay algo que guardar.
 class _ResultPickerSheet extends StatefulWidget {
   const _ResultPickerSheet({
     required this.student,
@@ -289,31 +404,44 @@ class _ResultPickerSheet extends StatefulWidget {
 
   final TestStudent student;
   final TestTechnique technique;
-  final TechniqueResultStatus? initial;
+  final GradedResult? initial;
 
   @override
   State<_ResultPickerSheet> createState() => _ResultPickerSheetState();
 }
 
 class _ResultPickerSheetState extends State<_ResultPickerSheet> {
-  late TechniqueResultStatus _status =
-      widget.initial ?? TechniqueResultStatus.pass;
-  int? _selectedMistakeId;
+  late TechniqueResultStatus? _status = widget.initial?.status;
+  late final int? _initialMistakeId =
+      (widget.initial == null || widget.initial!.isPass)
+      ? null
+      : widget.initial!.mistakeId;
+  late final TextEditingController _text = TextEditingController(
+    text: (widget.initial == null || widget.initial!.isPass)
+        ? ''
+        : widget.initial!.freeText,
+  );
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.technique.mistakes.isNotEmpty) {
-      _selectedMistakeId = widget.technique.mistakes.first.id;
-    }
+  void dispose() {
+    _text.dispose();
+    super.dispose();
   }
 
-  bool get _needsMistake => _status != TechniqueResultStatus.pass;
+  /// X y F muestran lo mismo: los errores predeterminados y el texto libre.
+  bool get _showDetail =>
+      _status == TechniqueResultStatus.fail ||
+      _status == TechniqueResultStatus.totalFail;
 
-  bool get _canSave =>
-      !_needsMistake ||
-      widget.technique.mistakes.isEmpty ||
-      _selectedMistakeId != null;
+  bool get _hasMistakes => widget.technique.mistakes.isNotEmpty;
+
+  /// Con errores predeterminados disponibles, el texto libre solo se puede
+  /// guardar si tiene contenido (si no, hay que tocar un error). Sin errores
+  /// configurados, es la única forma de registrar la falla, así que puede
+  /// guardarse vacío.
+  bool get _canSaveText => _text.text.trim().isNotEmpty || !_hasMistakes;
+
+  void _finish(GradedResult result) => Navigator.of(context).pop(result);
 
   @override
   Widget build(BuildContext context) {
@@ -322,7 +450,7 @@ class _ResultPickerSheetState extends State<_ResultPickerSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -332,16 +460,25 @@ class _ResultPickerSheetState extends State<_ResultPickerSheet> {
                 children: [
                   Text(
                     widget.student.num.toString(),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Text(
                     widget.student.levelCode,
-                    style: const TextStyle(color: Color(0xFFE3A34C), fontSize: 16),
+                    style: const TextStyle(
+                      color: Color(0xFFE3A34C),
+                      fontSize: 16,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(widget.student.fullName, style: const TextStyle(fontSize: 16)),
+                    child: Text(
+                      widget.student.fullName,
+                      style: const TextStyle(fontSize: 16),
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
@@ -354,64 +491,106 @@ class _ResultPickerSheetState extends State<_ResultPickerSheet> {
                 children: [
                   Expanded(
                     child: _ChoiceButton(
+                      key: const Key('result-pass'),
                       color: const Color(0xFF13B72E),
                       selected: _status == TechniqueResultStatus.pass,
                       child: const Icon(Icons.check, color: Colors.white),
-                      onTap: () => setState(() => _status = TechniqueResultStatus.pass),
+                      onTap: () => _finish(
+                        const GradedResult(status: TechniqueResultStatus.pass),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: _ChoiceButton(
+                      key: const Key('result-fail'),
                       color: const Color(0xFFB61317),
                       selected: _status == TechniqueResultStatus.fail,
                       child: const Icon(Icons.close, color: Colors.white),
-                      onTap: () => setState(() => _status = TechniqueResultStatus.fail),
+                      onTap: () =>
+                          setState(() => _status = TechniqueResultStatus.fail),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: _ChoiceButton(
+                      key: const Key('result-total-fail'),
                       color: const Color(0xFFB61317),
                       selected: _status == TechniqueResultStatus.totalFail,
-                      child: const Text('F', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22)),
-                      onTap: () => setState(() => _status = TechniqueResultStatus.totalFail),
+                      child: const Text(
+                        'F',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 22,
+                        ),
+                      ),
+                      onTap: () => setState(
+                        () => _status = TechniqueResultStatus.totalFail,
+                      ),
                     ),
                   ),
                 ],
               ),
-              if (_needsMistake) ...[
+              if (_showDetail) ...[
                 const SizedBox(height: 16),
-                const Text('Choose mistake:', style: TextStyle(fontSize: 12)),
-                const SizedBox(height: 8),
-                if (widget.technique.mistakes.isEmpty)
-                  const Text(
-                    'Este test no tiene mistakes configurados para esta técnica.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  )
-                else
+                if (_hasMistakes) ...[
+                  const Text('Choose mistake:', style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: widget.technique.mistakes.map((m) {
                       return ChoiceChip(
+                        key: Key('mistake-${m.id}'),
                         label: Text(m.name),
-                        selected: _selectedMistakeId == m.id,
-                        onSelected: (_) => setState(() => _selectedMistakeId = m.id),
+                        selected: _initialMistakeId == m.id,
+                        // Un toque y se guarda: sin botón SAVE.
+                        onSelected: (_) => _finish(
+                          GradedResult(
+                            status: _status!,
+                            mistakeId: m.id,
+                            freeText: _text.text.trim(),
+                          ),
+                        ),
                       );
                     }).toList(),
                   ),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _canSave
-                      ? () => Navigator.of(context).pop(_status)
-                      : null,
-                  child: const Text('SAVE'),
+                ] else
+                  const Text(
+                    'This technique has no mistakes configured.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                const SizedBox(height: 16),
+                TextField(
+                  key: const Key('free-text'),
+                  controller: _text,
+                  minLines: 1,
+                  maxLines: 4,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Free text',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    key: const Key('free-text-save'),
+                    onPressed: _canSaveText
+                        ? () => _finish(
+                            GradedResult(
+                              status: _status!,
+                              mistakeId: _initialMistakeId,
+                              freeText: _text.text.trim(),
+                            ),
+                          )
+                        : null,
+                    child: const Text('SAVE'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -422,6 +601,7 @@ class _ResultPickerSheetState extends State<_ResultPickerSheet> {
 
 class _ChoiceButton extends StatelessWidget {
   const _ChoiceButton({
+    super.key,
     required this.color,
     required this.selected,
     required this.child,
@@ -444,9 +624,63 @@ class _ChoiceButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(5),
-          border: selected ? Border.all(color: Colors.orange, width: 1.5) : null,
+          border: selected
+              ? Border.all(color: Colors.orange, width: 1.5)
+              : null,
         ),
         child: child,
+      ),
+    );
+  }
+}
+
+/// Estado de la subida al servidor del test abierto.
+class _SyncStatus extends StatelessWidget {
+  const _SyncStatus({
+    required this.pending,
+    required this.phase,
+    required this.onRetry,
+  });
+
+  final int pending;
+  final SyncPhase phase;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final String text;
+    final IconData icon;
+    final Color color;
+    if (pending == 0) {
+      text = 'All saved';
+      icon = Icons.cloud_done_outlined;
+      color = Colors.grey;
+    } else if (phase == SyncPhase.authRequired) {
+      text = '$pending not uploaded: log in again';
+      icon = Icons.lock_outline;
+      color = Colors.orange;
+    } else if (phase == SyncPhase.offline) {
+      text = '$pending not uploaded: no connection';
+      icon = Icons.cloud_off_outlined;
+      color = Colors.orange;
+    } else {
+      text = 'Uploading $pending…';
+      icon = Icons.cloud_upload_outlined;
+      color = Colors.grey;
+    }
+    return InkWell(
+      key: const Key('sync-status'),
+      onTap: pending == 0 ? null : onRetry,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 4),
+            Text(text, style: TextStyle(fontSize: 11, color: color)),
+          ],
+        ),
       ),
     );
   }

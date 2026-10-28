@@ -62,7 +62,15 @@ QqszKbrAKbkTidOIijlBO8n9pu0f9GBj39ItVQGL
 /// reemplace a producción, este valor es lo único que hay que cambiar, y
 /// solo si además cambian las rutas (hoy son distintas a propósito, ver
 /// docs/LARAVEL_BACKEND_PLAN.md sección 3).
-const String kProductionBaseUrl = 'https://ikmfgrader.xyz';
+///
+/// Se puede sobrescribir al compilar con `--dart-define=API_BASE_URL=...`
+/// (ej. un servidor de mentira local) para probar flujos que ESCRIBEN datos,
+/// como guardar resultados de un test, sin tocar producción. Sin el
+/// define, el valor es siempre producción.
+const String kProductionBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'https://ikmfgrader.xyz',
+);
 
 /// Cliente HTTP único de la app. Agrega el Bearer token automáticamente a
 /// toda request a /api/*, igual que el HTTP Interceptor del cliente Angular
@@ -73,9 +81,7 @@ class ApiClient {
     _dio.httpClientAdapter = IOHttpClientAdapter(
       createHttpClient: () {
         final context = SecurityContext(withTrustedRoots: true);
-        context.setTrustedCertificatesBytes(
-          utf8.encode(_kSectigoRootR46Pem),
-        );
+        context.setTrustedCertificatesBytes(utf8.encode(_kSectigoRootR46Pem));
         return HttpClient(context: context);
       },
     );
@@ -84,7 +90,8 @@ class ApiClient {
         onRequest: (options, handler) async {
           // Los endpoints de login (/token, /FBGoogle/token) y
           // forgetPassword NO llevan token — igual que el original.
-          final isAuthEndpoint = options.path.contains('/token') ||
+          final isAuthEndpoint =
+              options.path.contains('/token') ||
               options.path.contains('forgetPassword');
 
           if (!isAuthEndpoint) {

@@ -58,3 +58,11 @@ Requiere **iOS 15.0+** como mínimo (ver nota abajo) y Android API 24+ (sin prob
 ## Pendiente menor
 
 El test automático default (`test/widget_test.dart`) está fallando por un problema de timing con el redirect async de `go_router` en el entorno de test (no reproducido en la app real, solo en el harness de test). No se investigó a fondo — prioridad baja, la validación real importante (contra producción, en el simulador) ya está hecha.
+
+## Calificación offline-first y cierre de test (2026-10-28)
+
+Implementado: pantalla de calificación con guardado local primero (`lib/features/tests/results_outbox.dart`: cola persistente + motor de sincronización con reintentos), botón **End Test** en Results (pide el cierre: queda guardado en el teléfono y el motor sube lo pendiente y después llama `POST /api/sync/SyncTestStatus` con `lastRow: true`, reintentando solo; mientras está pedido la calificación del test queda bloqueada y se puede **Cancel** hasta que el servidor confirme) y detalle por alumno con todas las técnicas. Para probar sin tocar producción: `python3 tool/mock_server.py` + `flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8099`.
+
+### Pendientes / decisiones futuras
+- **Email de resultados a los alumnos al terminar el test — DESACTIVADO a propósito (decisión del cliente, 2026-10-28).** El original, al cerrar, llama `GET /api/sync/SendStudentsEmail/{id}`. Esta app NO lo llama. Decidir más adelante si se activa (con producción real manda correos de verdad a los alumnos).
+- La forma de `results` en `GET /api/tests/{id}` está inferida del cliente Angular, sin verificar contra el servidor real.

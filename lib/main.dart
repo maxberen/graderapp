@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_router.dart';
+import 'features/tests/results_outbox.dart';
 
 // TODO(firebase): inicializar Crashlytics acá una vez que exista un
 // proyecto Firebase real para esta app (requiere acceso a la cuenta de
@@ -14,7 +15,10 @@ import 'app_router.dart';
 //     return true;
 //   };
 // Ver docs/FLUTTER_APP_PLAN.md sección 7 y HANDOFF.md de este proyecto.
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Carga la cola de resultados pendientes y sube lo que haya quedado.
+  await ResultsSyncEngine.instance.start();
   runApp(const GraderApp());
 }
 
@@ -30,38 +34,38 @@ void main() {
 // Expuesto como función (no inline en build()) para que los tests puedan
 // envolver widgets con el mismo theme real — ver test/test_helpers/pump_app.dart.
 ThemeData graderLightTheme() => ThemeData(
-      useMaterial3: true,
-      colorScheme: const ColorScheme.light(
-        primary: Color(0xFF2B2B2B),
-        onPrimary: Colors.white,
-        primaryContainer: Color(0xFFE0E0E0),
-        onPrimaryContainer: Color(0xFF1A1A1A),
-        secondary: Color(0xFF5A5A5A),
-        onSecondary: Colors.white,
-        surface: Colors.white,
-        onSurface: Color(0xFF1A1A1A),
-        surfaceContainerHighest: Color(0xFFEDEDED),
-        error: Color(0xFFB61317),
-        onError: Colors.white,
-      ),
-    );
+  useMaterial3: true,
+  colorScheme: const ColorScheme.light(
+    primary: Color(0xFF2B2B2B),
+    onPrimary: Colors.white,
+    primaryContainer: Color(0xFFE0E0E0),
+    onPrimaryContainer: Color(0xFF1A1A1A),
+    secondary: Color(0xFF5A5A5A),
+    onSecondary: Colors.white,
+    surface: Colors.white,
+    onSurface: Color(0xFF1A1A1A),
+    surfaceContainerHighest: Color(0xFFEDEDED),
+    error: Color(0xFFB61317),
+    onError: Colors.white,
+  ),
+);
 
 ThemeData graderDarkTheme() => ThemeData(
-      useMaterial3: true,
-      colorScheme: const ColorScheme.dark(
-        primary: Color(0xFFD0D0D0),
-        onPrimary: Color(0xFF1A1A1A),
-        primaryContainer: Color(0xFF3A3A3A),
-        onPrimaryContainer: Colors.white,
-        secondary: Color(0xFFBDBDBD),
-        onSecondary: Color(0xFF1A1A1A),
-        surface: Color(0xFF121212),
-        onSurface: Colors.white,
-        surfaceContainerHighest: Color(0xFF2A2A2A),
-        error: Color(0xFFB61317),
-        onError: Colors.white,
-      ),
-    );
+  useMaterial3: true,
+  colorScheme: const ColorScheme.dark(
+    primary: Color(0xFFD0D0D0),
+    onPrimary: Color(0xFF1A1A1A),
+    primaryContainer: Color(0xFF3A3A3A),
+    onPrimaryContainer: Colors.white,
+    secondary: Color(0xFFBDBDBD),
+    onSecondary: Color(0xFF1A1A1A),
+    surface: Color(0xFF121212),
+    onSurface: Colors.white,
+    surfaceContainerHighest: Color(0xFF2A2A2A),
+    error: Color(0xFFB61317),
+    onError: Colors.white,
+  ),
+);
 
 class GraderApp extends StatelessWidget {
   const GraderApp({super.key});
