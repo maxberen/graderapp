@@ -214,32 +214,26 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
                     ),
                   ),
                 ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton(
-                        style: FilledButton.styleFrom(
-                          shape: const RoundedRectangleBorder(),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        onPressed: _addStudentEntry,
-                        child: const Text('ADD STUDENTS'),
-                      ),
+                // QR (Student Passport) es la forma principal: trae la identidad
+                // real del alumno. El alta manual es secundaria y registra un
+                // alumno nuevo.
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    key: const Key('group-scan-qr'),
+                    style: FilledButton.styleFrom(
+                      shape: const RoundedRectangleBorder(),
+                      padding: const EdgeInsets.symmetric(vertical: 20),
                     ),
-                    const SizedBox(width: 2),
-                    Expanded(
-                      child: FilledButton.icon(
-                        key: const Key('group-scan-qr'),
-                        style: FilledButton.styleFrom(
-                          shape: const RoundedRectangleBorder(),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        onPressed: _scanQr,
-                        icon: const Icon(Icons.qr_code_scanner),
-                        label: const Text('QR'),
-                      ),
-                    ),
-                  ],
+                    onPressed: _scanQr,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('SCAN STUDENT QR'),
+                  ),
+                ),
+                TextButton(
+                  key: const Key('group-add-manually'),
+                  onPressed: _addStudentEntry,
+                  child: const Text('Add manually (new student)'),
                 ),
                 Expanded(
                   child: _entries.isEmpty
@@ -247,7 +241,7 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
                           child: Padding(
                             padding: EdgeInsets.all(24),
                             child: Text(
-                              'Tap ADD STUDENTS, or QR to scan a Student Passport.',
+                              'Scan a Student Passport QR to add students.\nNo QR? Add manually as a new student.',
                               textAlign: TextAlign.center,
                             ),
                           ),
