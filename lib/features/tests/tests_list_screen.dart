@@ -6,6 +6,7 @@ import '../auth/auth_repository.dart';
 import '../location/countries_repository.dart';
 import '../location/country_selector_screen.dart';
 import '../menu/grader_menu_drawer.dart';
+import 'results_outbox.dart';
 import 'results_screen.dart';
 import 'students_screen.dart';
 import 'test_detail_repository.dart';
@@ -196,7 +197,10 @@ class _TestsListScreenState extends State<TestsListScreen> {
       return Center(child: Text(_error!));
     }
 
-    return RefreshIndicator(
+    // Se redibuja cuando cambia la cola local (resultados pendientes / cierre).
+    return ListenableBuilder(
+      listenable: ResultsOutbox.instance,
+      builder: (context, _) => RefreshIndicator(
       onRefresh: _loadTests,
       child: TabBarView(
         children: [
@@ -204,6 +208,60 @@ class _TestsListScreenState extends State<TestsListScreen> {
           _TestList(tests: inProgress, onTap: _openTest),
           _TestList(tests: ended, onTap: _openTest),
         ],
+      ),
+      ),
+    );
+  }
+}
+
+/// ¿Está todo lo de este test en el servidor? No si quedan resultados
+/// calificados en el teléfono sin subir, o si el cierre (End Test) está
+/// pedido y el servidor todavía no lo confirmó.
+bool isTestSynced(int testId, [ResultsOutbox? outbox]) {
+  final o = outbox ?? ResultsOutbox.instance;
+  return o.pendingCount(testId) == 0 && !o.isCloseRequested(testId);
+}
+
+/// Nube con tilde verde (sincronizado) o cruz roja (sin sincronizar), como
+/// el indicador de cada test en la app original.
+class TestSyncBadge extends StatelessWidget {
+  const TestSyncBadge({super.key, required this.synced});
+
+  final bool synced;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = synced ? const Color(0xFF13B72E) : const Color(0xFFB61317);
+    return Tooltip(
+      message: synced ? 'Synced' : 'Not synced',
+      child: SizedBox(
+        key: Key(synced ? 'sync-badge-synced' : 'sync-badge-unsynced'),
+        width: 34,
+        height: 30,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Positioned(
+              left: 0,
+              top: 0,
+              child: Icon(Icons.cloud_outlined, size: 28),
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Icon(
+                  synced ? Icons.check : Icons.close,
+                  size: 12,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -279,6 +337,7 @@ class _TestList extends StatelessWidget {
                     ],
                   ),
                 ),
+                TestSyncBadge(synced: isTestSynced(test.id)),
               ],
             ),
           ),
