@@ -77,3 +77,9 @@ Hoy "Add New Group" tiene un botón **QR** (Student Passport) que carga la ficha
   2. La app busca al alumno por email antes de enviar y usa **ese** ID. Falta confirmar si hay endpoint (¿`GET /api/students/instructor` trae email?).
   3. Dejarlo como está (igual que el original): tolera duplicados.
 - **Recomendación:** opción 1 (Laravel); mientras tanto, opción 3.
+
+**Aclaración (2026-10-28): un mismo alumno puede ser evaluado por distintos instructores.** Implicancias para la decisión de arriba:
+- La opción 2 (buscar en la app con `GET /api/students/instructor`) **no sirve**: ese endpoint lista solo los alumnos del instructor actual, así que no encontraría al alumno que ya cargó otro instructor y se duplicaría igual. La deduplicación tiene que ser **global** y del lado del servidor (opción 1).
+- Sin deduplicar, el historial de un alumno queda repartido en varios registros (uno por instructor/grupo/test).
+- **Riesgo en el email como clave:** con "Use My Default Email" varios alumnos distintos comparten el email del instructor. Deduplicar solo por email los fusionaría en una sola persona. `GroupsController::saveGroup` (Laravel) hoy busca por `EMAIL` solo; habría que no deduplicar cuando el email es el por defecto del instructor, o usar email + nombre + apellido. Los alumnos leídos por QR traen email real, así que para ellos el email sí sirve de clave.
+- Si el alumno ya existe y otro instructor lo vuelve a cargar con otro nivel, hay que decidir quién manda (hoy el Laravel no actualiza el nivel de un alumno existente).
