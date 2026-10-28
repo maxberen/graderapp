@@ -66,3 +66,14 @@ Implementado: pantalla de calificación con guardado local primero (`lib/feature
 ### Pendientes / decisiones futuras
 - **Email de resultados a los alumnos al terminar el test — DESACTIVADO a propósito (decisión del cliente, 2026-10-28).** El original, al cerrar, llama `GET /api/sync/SendStudentsEmail/{id}`. Esta app NO lo llama. Decidir más adelante si se activa (con producción real manda correos de verdad a los alumnos).
 - La forma de `results` en `GET /api/tests/{id}` está inferida del cliente Angular, sin verificar contra el servidor real.
+
+### Decisión pendiente: alumnos leídos por QR al crear un grupo (2026-10-28)
+Hoy "Add New Group" tiene un botón **QR** (Student Passport) que carga la ficha del alumno, pero `GroupsRepository.createGroup` envía **todos** los alumnos (QR o manuales) a `POST /api/students/creategroup` con `Id: 0`, o sea como alumnos nuevos. Pendiente decidir qué hacer:
+
+- **Evidencia (dump de producción, `ikmf_local`):** 56.666 alumnos pero solo 24.773 emails distintos (9.169 repetidos); de los 719 alumnos que están en grupos, 620 comparten email con otro registro. El servidor original **no deduplica por email**: crea un alumno nuevo cada vez.
+- **Idea evaluada:** QR → enviar el ID del alumno existente; manual → `Id: 0`. **Riesgo:** el `id` del QR es de Student Passport (otra base), no necesariamente el ID de `km_students` del Grader; mandarlo como `Id` podría vincular al alumno equivocado (peor que un duplicado). Sin verificar cómo trata producción un `Id != 0` en `creategroup` (el código de ese endpoint no está en el fuente recuperado).
+- **Opciones:**
+  1. El servidor busca por email al guardar el grupo y reutiliza el alumno existente. Es lo más seguro y ya lo hace el backend Laravel (`GroupsController::saveGroup`); el servidor de producción actual no. Se aprovecha al apuntar la app al Laravel.
+  2. La app busca al alumno por email antes de enviar y usa **ese** ID. Falta confirmar si hay endpoint (¿`GET /api/students/instructor` trae email?).
+  3. Dejarlo como está (igual que el original): tolera duplicados.
+- **Recomendación:** opción 1 (Laravel); mientras tanto, opción 3.
