@@ -5,6 +5,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/network/api_client.dart';
 import 'add_student_repository.dart';
+import 'add_student_screen.dart';
 import 'test_detail_repository.dart';
 
 /// Porteado de scanBarCode()/addStudentQR() (main.js:45530-45554, y
@@ -21,9 +22,17 @@ import 'test_detail_repository.dart';
 /// (la parte que sí se puede romper con datos reales) tiene su propio test
 /// unitario en test/features/tests/qr_payload_test.dart.
 class QrScanScreen extends StatefulWidget {
-  const QrScanScreen({super.key, required this.nextNum});
+  const QrScanScreen({
+    super.key,
+    required this.nextNum,
+    this.allowManual = false,
+  });
 
   final int nextNum;
+
+  /// Muestra la alternativa "Add manually (new student)": abre el formulario
+  /// manual y devuelve el alumno cargado, igual que un escaneo.
+  final bool allowManual;
 
   @override
   State<QrScanScreen> createState() => _QrScanScreenState();
@@ -104,6 +113,15 @@ class _QrScanScreenState extends State<QrScanScreen> {
     }
   }
 
+  Future<void> _addManually() async {
+    final student = await Navigator.of(context).push<TestStudent>(
+      MaterialPageRoute(
+        builder: (_) => AddStudentScreen(nextNum: widget.nextNum),
+      ),
+    );
+    if (student != null && mounted) Navigator.of(context).pop(student);
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -122,6 +140,19 @@ class _QrScanScreenState extends State<QrScanScreen> {
               child: ColoredBox(
                 color: Colors.black38,
                 child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
+          if (widget.allowManual)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: _error != null ? 96 : 24,
+              child: SafeArea(
+                child: FilledButton(
+                  key: const Key('add-manually'),
+                  onPressed: _addManually,
+                  child: const Text('Add manually (new student)'),
+                ),
               ),
             ),
           if (_error != null)

@@ -126,7 +126,7 @@ void main() {
   testWidgets('StudentsScreen (toolbar real) sin excepciones, con y sin alumnos',
       (tester) async {
     // Caso real que rompió: lista vacía (estado "No Students Here...") Y
-    // lista con alumnos — el toolbar con Add Group/Add Student/QR es el
+    // lista con alumnos — el toolbar con Add Group/Add Student es el
     // mismo en ambos casos.
     for (final students in [<dynamic>[], null]) {
       await pumpApp(
@@ -143,7 +143,7 @@ void main() {
       expect(find.text('By Alphabet'), findsOneWidget);
       expect(find.text('Add Group'), findsOneWidget);
       expect(find.text('Add Student'), findsOneWidget);
-      expect(find.text('QR'), findsOneWidget);
+      expect(find.text('QR'), findsNothing, reason: 'QR es el modo por defecto de Add Student');
     }
   });
 

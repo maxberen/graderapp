@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/compact_toolbar_style.dart';
-import 'add_student_screen.dart';
 import 'groups_list_screen.dart';
 import 'qr_scan_screen.dart';
 import 'test_detail_repository.dart';
@@ -10,7 +9,7 @@ import 'test_grading_screen.dart';
 /// Porteado de CU (main.js:45407-45689) — pantalla "Students" que se abre
 /// para un test Opened (status 1): marcar presentes/ausentes antes de
 /// arrancar a calificar. Header con foto de fondo, "Test ID {id}  |
-/// {centro}, {país}", toolbar (By Alphabet / Add Group / Add Student / QR),
+/// {centro}, {país}", toolbar (By Alphabet / Add Group / Add Student; Add Student escanea QR por defecto),
 /// lista de alumnos con check verde si están presentes, o el estado vacío
 /// real ("No Students Here...") cuando no hay alumnos cargados — igual al
 /// que mostró el usuario en una captura real de producción.
@@ -67,19 +66,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
+  /// Add Student: por defecto escanea el QR de Student Passport; si no se
+  /// puede, la misma pantalla ofrece cargarlo a mano como alumno nuevo.
   Future<void> _addStudent() async {
     final student = await Navigator.of(context).push<TestStudent>(
       MaterialPageRoute(
-        builder: (_) => AddStudentScreen(nextNum: _students.length + 1),
-      ),
-    );
-    if (student != null) setState(() => _students.add(student));
-  }
-
-  Future<void> _scanQr() async {
-    final student = await Navigator.of(context).push<TestStudent>(
-      MaterialPageRoute(
-        builder: (_) => QrScanScreen(nextNum: _students.length + 1),
+        builder: (_) => QrScanScreen(
+          nextNum: _students.length + 1,
+          allowManual: true,
+        ),
       ),
     );
     if (student != null) setState(() => _students.add(student));
@@ -169,11 +164,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                           style: kCompactToolbarButtonStyle,
                           onPressed: _addStudent,
                           child: const Text('Add Student'),
-                        ),
-                        FilledButton(
-                          style: kCompactToolbarButtonStyle,
-                          onPressed: _scanQr,
-                          child: const Text('QR'),
                         ),
                       ],
                     ),
