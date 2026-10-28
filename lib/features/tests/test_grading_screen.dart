@@ -65,8 +65,6 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
     });
     _outbox.addListener(_onChanged);
     _engine.addListener(_onChanged);
-    // Por si quedaron resultados de antes sin subir.
-    _engine.kick();
   }
 
   @override
@@ -122,7 +120,7 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
       testStudentId: student.testStudentId,
       result: result,
     );
-    _engine.kick();
+    // No se sube nada ahora: todo se envía junto al tocar End Test.
   }
 
   void _next() {
@@ -272,6 +270,7 @@ class _TestGradingScreenState extends State<TestGradingScreen> {
                   const SizedBox(width: 12),
                   _SyncStatus(
                     pending: _outbox.pendingCount(widget.test.id),
+                    closing: _outbox.isCloseRequested(widget.test.id),
                     phase: _engine.phase,
                     error: _outbox.lastErrorFor(widget.test.id),
                     onRetry: _engine.kick,
@@ -639,12 +638,14 @@ class _ChoiceButton extends StatelessWidget {
 class _SyncStatus extends StatelessWidget {
   const _SyncStatus({
     required this.pending,
+    required this.closing,
     required this.phase,
     required this.error,
     required this.onRetry,
   });
 
   final int pending;
+  final bool closing;
   final SyncPhase phase;
   final String? error;
   final VoidCallback onRetry;
@@ -657,6 +658,11 @@ class _SyncStatus extends StatelessWidget {
     if (pending == 0) {
       text = 'All saved';
       icon = Icons.cloud_done_outlined;
+      color = Colors.grey;
+    } else if (!closing) {
+      // Durante la prueba no se sube nada: se envía al tocar End Test.
+      text = '$pending saved on this phone';
+      icon = Icons.save_outlined;
       color = Colors.grey;
     } else if (phase == SyncPhase.authRequired) {
       text = '$pending not uploaded: log in again';
@@ -677,7 +683,7 @@ class _SyncStatus extends StatelessWidget {
     }
     return InkWell(
       key: const Key('sync-status'),
-      onTap: pending == 0 ? null : onRetry,
+      onTap: pending == 0 || !closing ? null : onRetry,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Row(

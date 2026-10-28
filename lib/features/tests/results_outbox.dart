@@ -195,10 +195,12 @@ class ResultsOutbox extends ChangeNotifier {
   );
 
   /// Siguiente entrada pendiente (la más vieja primero), salteando [skip].
-  OutboxEntry? nextDirty({Set<String> skip = const {}}) {
+  /// Si [onlyTests] no es nulo, solo considera resultados de esos tests.
+  OutboxEntry? nextDirty({Set<String> skip = const {}, Set<int>? onlyTests}) {
     OutboxEntry? best;
     for (final e in _entries.values) {
       if (!e.dirty || skip.contains(e.key)) continue;
+      if (onlyTests != null && !onlyTests.contains(e.testId)) continue;
       if (best == null || e.updatedAt.isBefore(best.updatedAt)) best = e;
     }
     return best;
@@ -352,7 +354,14 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
     required this.repository,
     required this.fetchDetail,
     this.backoff = defaultBackoff,
+    this.uploadWhileGrading = false,
   });
+
+  /// false (lo normal): los resultados se quedan en el teléfono y se suben
+  /// todos juntos recién cuando el instructor toca End Test (el cierre
+  /// pedido), para no usar la conexión durante la prueba. true: se suben
+  /// apenas se califican (solo pruebas).
+  final bool uploadWhileGrading;
 
   static final ResultsSyncEngine instance = ResultsSyncEngine(
     outbox: ResultsOutbox.instance,
@@ -418,7 +427,8 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
         final ok = await _drain();
         if (!ok) return;
       } while (_again);
-      if (outbox.pendingCount() > 0 || outbox.closeRequests.isNotEmpty) {
+      if (outbox.closeRequests.isNotEmpty ||
+          (uploadWhileGrading && outbox.pendingCount() > 0)) {
         // Si algo quedó sin subir al terminar la pasada, es que el servidor
         // lo rechazó: no es "subiendo", es un error con reintento.
         _setPhase(SyncPhase.error);
@@ -438,7 +448,10 @@ class ResultsSyncEngine extends ChangeNotifier with WidgetsBindingObserver {
     final skip = <String>{};
     final knownIds = <int, Map<String, int>>{};
     while (true) {
-      final e = outbox.nextDirty(skip: skip);
+      final e = outbox.nextDirty(
+        skip: skip,
+        onlyTests: uploadWhileGrading ? null : outbox.closeRequests,
+      );
       if (e == null) return _sendCloses();
       _setPhase(SyncPhase.syncing);
       final version = e.version;

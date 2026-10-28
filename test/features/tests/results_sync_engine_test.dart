@@ -53,6 +53,7 @@ void main() {
       repository: ResultsSyncRepository(dio),
       fetchDetail: (_) async => throw UnimplementedError(),
       backoff: (_) => const Duration(milliseconds: 300),
+      uploadWhileGrading: true,
     );
   });
 
@@ -174,6 +175,7 @@ void main() {
           );
         },
         backoff: (_) => const Duration(milliseconds: 20),
+        uploadWhileGrading: true,
       );
       put(1, 1, TechniqueResultStatus.fail);
       outbox.get(7, 1, 1)!.sent = true; // intento previo sin respuesta
@@ -233,4 +235,30 @@ void main() {
       expect(outbox.isClosed(7), isFalse);
     },
   );
+
+  test('por defecto no sube nada mientras se califica; todo junto al cerrar',
+      () async {
+    final dio = Dio(BaseOptions(baseUrl: 'http://x'))..httpClientAdapter = server;
+    final e2 = ResultsSyncEngine(
+      outbox: outbox,
+      repository: ResultsSyncRepository(dio),
+      fetchDetail: (_) async => throw UnimplementedError(),
+      backoff: (_) => const Duration(milliseconds: 300),
+    );
+    put(1, 1, TechniqueResultStatus.pass);
+    put(2, 1, TechniqueResultStatus.fail);
+    put(3, 1, TechniqueResultStatus.pass);
+    e2.kick();
+    await settle();
+    expect(server.paths, isEmpty, reason: 'sin End Test no se usa la red');
+    expect(outbox.pendingCount(7), 3);
+
+    outbox.requestClose(7);
+    e2.kick();
+    await settle(300);
+    expect(server.paths.where((p) => p.endsWith('SyncStudentsResults')), hasLength(3));
+    expect(server.paths.last, '/api/sync/SyncTestStatus');
+    expect(outbox.isClosed(7), isTrue);
+    e2.dispose();
+  });
 }
