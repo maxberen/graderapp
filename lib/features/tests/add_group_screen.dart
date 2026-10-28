@@ -4,6 +4,7 @@ import '../../core/network/api_client.dart';
 import '../../core/storage/secure_storage.dart';
 import 'add_student_repository.dart';
 import 'groups_repository.dart';
+import 'qr_scan_screen.dart';
 import 'test_detail_repository.dart';
 
 /// Porteado de la pantalla real "Add New Group" (`/add-group` → clase HJ,
@@ -27,6 +28,10 @@ class _StudentFormEntry {
   final emailController = TextEditingController();
   bool useDefaultEmail = false;
   StudentLevel? level;
+
+  /// ID del alumno en Student Passport si se cargó por QR (para no agregar
+  /// dos veces al mismo).
+  int? qrId;
 
   void dispose() {
     firstNameController.dispose();
@@ -74,6 +79,30 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
 
   void _addStudentEntry() {
     setState(() => _entries.add(_StudentFormEntry()));
+  }
+
+  /// Lee el QR de Student Passport de un alumno y lo agrega a la lista,
+  /// igual que "QR" al agregar alumnos a un test. Los datos quedan editables.
+  Future<void> _scanQr() async {
+    final student = await Navigator.of(context).push<TestStudent>(
+      MaterialPageRoute(
+        builder: (_) => QrScanScreen(nextNum: _entries.length + 1),
+      ),
+    );
+    if (student == null || !mounted) return;
+    if (_entries.any((e) => e.qrId == student.id)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${student.fullName} ya está en el grupo.')),
+      );
+      return;
+    }
+    final entry = _StudentFormEntry()
+      ..qrId = student.id
+      ..level = _levels.where((l) => l.code == student.levelCode).firstOrNull;
+    entry.firstNameController.text = student.firstName;
+    entry.lastNameController.text = student.lastName;
+    entry.emailController.text = student.email;
+    setState(() => _entries.add(entry));
   }
 
   void _toggleDefaultEmail(_StudentFormEntry entry, bool value) {
@@ -185,16 +214,32 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
                     ),
                   ),
                 ),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      shape: const RoundedRectangleBorder(),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          shape: const RoundedRectangleBorder(),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        onPressed: _addStudentEntry,
+                        child: const Text('ADD STUDENTS'),
+                      ),
                     ),
-                    onPressed: _addStudentEntry,
-                    child: const Text('ADD STUDENTS'),
-                  ),
+                    const SizedBox(width: 2),
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const Key('group-scan-qr'),
+                        style: FilledButton.styleFrom(
+                          shape: const RoundedRectangleBorder(),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        onPressed: _scanQr,
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text('QR'),
+                      ),
+                    ),
+                  ],
                 ),
                 Expanded(
                   child: _entries.isEmpty
@@ -202,7 +247,7 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
                           child: Padding(
                             padding: EdgeInsets.all(24),
                             child: Text(
-                              'Tocá ADD STUDENTS para cargar alumnos.',
+                              'Tap ADD STUDENTS, or QR to scan a Student Passport.',
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -327,4 +372,8 @@ class _AddGroupScreenState extends State<AddGroupScreen> {
       ),
     );
   }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
