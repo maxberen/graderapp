@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Confía explícitamente en la raíz "Sectigo Public Server Authentication
+  Root R46" (la que firma la cadena real de ikmfgrader.xyz, confirmado con
+  openssl s_client) ADEMÁS de las raíces del sistema. Algunos Android sin
+  Google Mobile Services (confirmado en un Honor/Huawei real, Android 14) no
+  reciben las actualizaciones automáticas del almacén de confianza del
+  sistema y no tienen esta raíz relativamente nueva (2021) todavía.
+
+  A diferencia de configurar esto solo en el SecurityContext de Dio
+  (ver api_client.dart), esto aplica a NIVEL DE TODA LA APP — incluye
+  video_player/ExoPlayer, que usa su propio cliente HTTP nativo y no pasa
+  por Dio. Sin esto, el streaming de video puede fallar la validación TLS
+  en el mismo tipo de dispositivo, sintiéndose como una descarga eternamente
+  lenta (reintentos de handshake fallidos por cada fragmento) en vez de un
+  error claro.
+-->
+<network-security-config>
+    <base-config>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/sectigo_root_r46" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
